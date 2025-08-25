@@ -73,3 +73,43 @@
   border-radius: 10px;
   font-size: 0.9rem;
 }
+
+.playlist-options {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-bottom: 20px;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.option-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.option-group label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: white;
+}
+
+.playlist-select {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(0, 0, 0, 0.3);
+  color: white;
+  font-size: 14px;
+}
+
+.playlist-select:focus {
+  outline: none;
+  border-color: #1db954;
+}
+
+.option-group label input[type="checkbox"] {
+  margin-right: 8px;
+}

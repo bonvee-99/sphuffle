@@ -1,123 +1,70 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import { authenticateSpotify, handleAuthCallback } from "./utils/auth";
+import {
+  fetchUserProfile,
+  fetchUserPlaylists,
+  createOrUpdateMegaPlaylist,
+} from "./utils/spotify";
 
 function App() {
   const [accessToken, setAccessToken] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [playlists, setPlaylists] = useState([]);
   const [isCreating, setIsCreating] = useState(false);
+  const [selectedSphufflePlaylist, setSelectedSphufflePlaylist] = useState("");
+  const [syncMode, setSyncMode] = useState(false);
+  const [playlistFilter, setPlaylistFilter] = useState("both");
 
   useEffect(() => {
     const handleAuth = async () => {
       const result = await handleAuthCallback();
       if (result.accessToken) {
         setAccessToken(result.accessToken);
-        fetchUserProfile(result.accessToken);
+        handleFetchUserProfile(result.accessToken);
       }
     };
 
     handleAuth();
   }, []);
 
-  const fetchUserProfile = async (token) => {
+  useEffect(() => {
+    if (accessToken && userProfile) {
+      handleFetchUserPlaylists(accessToken, userProfile.id);
+      setSelectedSphufflePlaylist(""); // Reset selection when filter changes
+    }
+  }, [playlistFilter, accessToken, userProfile]);
+
+  const handleFetchUserProfile = async (token) => {
     try {
-      const response = await fetch("https://api.spotify.com/v1/me", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      const profile = await response.json();
+      const profile = await fetchUserProfile(token);
       setUserProfile(profile);
-      fetchUserPlaylists(token, profile.id);
+      handleFetchUserPlaylists(token, profile.id);
     } catch (error) {
       console.error("Error fetching user profile:", error);
     }
   };
 
-  const fetchUserPlaylists = async (token, userId) => {
+  const handleFetchUserPlaylists = async (token, userId) => {
     try {
-      const response = await fetch(
-        `https://api.spotify.com/v1/users/${userId}/playlists`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-      const data = await response.json();
-      setPlaylists(data.items || []);
+      const allPlaylists = await fetchUserPlaylists(token, userId);
+      
+      let filteredPlaylists;
+      if (playlistFilter === "owned") {
+        filteredPlaylists = allPlaylists.filter(playlist => playlist.owner.id === userId);
+      } else if (playlistFilter === "followed") {
+        filteredPlaylists = allPlaylists.filter(playlist => playlist.owner.id !== userId);
+      } else {
+        filteredPlaylists = allPlaylists; // both
+      }
+      
+      setPlaylists(filteredPlaylists);
     } catch (error) {
       console.error("Error fetching playlists:", error);
     }
   };
 
-  const getPlaylistTracks = async (playlistId) => {
-    try {
-      const response = await fetch(
-        `https://api.spotify.com/v1/playlists/${playlistId}/tracks`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        },
-      );
-      const data = await response.json();
-      return data.items || [];
-    } catch (error) {
-      console.error("Error fetching playlist tracks:", error);
-      return [];
-    }
-  };
-
-  const createPlaylist = async (name, description = "") => {
-    try {
-      const response = await fetch(
-        `https://api.spotify.com/v1/users/${userProfile.id}/playlists`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name,
-            description,
-            public: false,
-          }),
-        },
-      );
-      const playlist = await response.json();
-      return playlist;
-    } catch (error) {
-      console.error("Error creating playlist:", error);
-      return null;
-    }
-  };
-
-  const addTrackToPlaylist = async (playlistId, trackUri) => {
-    try {
-      const response = await fetch(
-        `https://api.spotify.com/v1/playlists/${playlistId}/tracks`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            uris: [trackUri],
-          }),
-        },
-      );
-      return await response.json();
-    } catch (error) {
-      console.error("Error adding track to playlist:", error);
-      return null;
-    }
-  };
-
-  const createPlaylistWithFirstSong = async () => {
+  const createMegaPlaylist = async () => {
     if (!playlists.length) {
       alert("No playlists found!");
       return;
@@ -125,44 +72,32 @@ function App() {
 
     setIsCreating(true);
     try {
-      // Get first playlist
-      const sourcePlaylist = playlists[0];
-      console.log(`Using source playlist: ${sourcePlaylist.name}`);
+      const result = await createOrUpdateMegaPlaylist(
+        accessToken,
+        userProfile,
+        playlists,
+        selectedSphufflePlaylist,
+        syncMode
+      );
 
-      // Get tracks from first playlist
-      const tracks = await getPlaylistTracks(sourcePlaylist.id);
-      if (!tracks.length) {
-        alert("No tracks found in the first playlist!");
-        return;
+      if (result.isUpdatingExisting) {
+        alert(
+          `Successfully updated "${result.targetPlaylist.name}"!\n` +
+          `Added: ${result.tracksToAdd} tracks\n` +
+          (syncMode ? `Removed: ${result.tracksToRemove} tracks\n` : '') +
+          `Total tracks: ${result.totalFinalTracks}`
+        );
+      } else {
+        alert(
+          `Successfully created "${result.targetPlaylist.name}" with ${result.tracksToAdd} tracks from ${result.sourcePlaylistsCount} playlists!`
+        );
       }
 
-      const firstTrack = tracks[0].track;
-      console.log(
-        `First track: ${firstTrack.name} by ${firstTrack.artists[0].name}`,
-      );
+      handleFetchUserPlaylists(accessToken, userProfile.id);
 
-      // Create new playlist
-      const newPlaylist = await createPlaylist(
-        "My New Sphuffle Playlist",
-        "Created with Sphuffle app",
-      );
-      if (!newPlaylist) {
-        alert("Failed to create playlist!");
-        return;
-      }
-
-      // Add first track to new playlist
-      await addTrackToPlaylist(newPlaylist.id, firstTrack.uri);
-
-      alert(
-        `Successfully created playlist "${newPlaylist.name}" with "${firstTrack.name}"!`,
-      );
-
-      // Refresh playlists
-      fetchUserPlaylists(accessToken, userProfile.id);
     } catch (error) {
-      console.error("Error in playlist creation process:", error);
-      alert("Error creating playlist. Check console for details.");
+      console.error("Error with playlist operation:", error);
+      alert(`Error with playlist operation: ${error.message}`);
     } finally {
       setIsCreating(false);
     }
@@ -200,12 +135,59 @@ function App() {
         )}
 
         <div className="actions">
+          <div className="playlist-options">
+            <div className="option-group">
+              <label htmlFor="filter-select">Include playlists:</label>
+              <select
+                id="filter-select"
+                value={playlistFilter}
+                onChange={(e) => setPlaylistFilter(e.target.value)}
+                className="playlist-select"
+              >
+                <option value="both">Owned and Followed</option>
+                <option value="owned">Only Owned by Me</option>
+                <option value="followed">Only Followed by Me</option>
+              </select>
+            </div>
+
+            <div className="option-group">
+              <label htmlFor="playlist-select">Use existing playlist:</label>
+              <select
+                id="playlist-select"
+                value={selectedSphufflePlaylist}
+                onChange={(e) => setSelectedSphufflePlaylist(e.target.value)}
+                className="playlist-select"
+              >
+                <option value="">Create new Sphuffle playlist</option>
+                {playlists.map((playlist) => (
+                  <option key={playlist.id} value={playlist.id}>
+                    {playlist.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="option-group">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={syncMode}
+                  onChange={(e) => setSyncMode(e.target.checked)}
+                />
+                Sync playlist (remove tracks not in other playlists)
+              </label>
+            </div>
+          </div>
+
           <button
-            onClick={createPlaylistWithFirstSong}
+            onClick={createMegaPlaylist}
             disabled={isCreating}
             className="create-button"
           >
-            {isCreating ? "Creating..." : "Create Playlist from First Song"}
+            {isCreating
+              ? selectedSphufflePlaylist ? "Updating Playlist..." : "Creating Playlist..."
+              : selectedSphufflePlaylist ? "Update Selected Playlist" : "Create New Sphuffle Playlist"
+            }
           </button>
 
           <button onClick={logout} className="logout-button">
@@ -216,7 +198,7 @@ function App() {
         {playlists.length > 0 && (
           <div className="playlist-info">
             <p>
-              Will use first song from: <strong>{playlists[0].name}</strong>
+              Ready to combine <strong>{playlists.length} playlists</strong> into one mega shuffle playlist
             </p>
           </div>
         )}
